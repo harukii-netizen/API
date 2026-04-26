@@ -133,8 +133,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/ping":
-            self._json({"status": "ok"})
+        if self.path in ("/", "/ping"):
+            self._json({"status": "ok", "service": "Avatar Guard API"})
         else:
             self._json({"error": "Not found"}, 404)
 
