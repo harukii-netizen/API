@@ -1,6 +1,9 @@
 import re
 import json
 import uuid
+import os
+import threading
+import time as _time
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -51,7 +54,13 @@ def extract_lsd(html):
 
 
 def get_token(cookie):
-    headers = {**BASE, "Cookie": cookie, "Host": "business.facebook.com", "Origin": "https://business.facebook.com", "Referer": "https://www.facebook.com/"}
+    headers = {
+        **BASE,
+        "Cookie": cookie,
+        "Host": "business.facebook.com",
+        "Origin": "https://business.facebook.com",
+        "Referer": "https://www.facebook.com/",
+    }
     r = session.get("https://business.facebook.com/business_locations", headers=headers, timeout=20)
     m = re.search(r"(EAAG\w+)", r.text)
     if not m:
@@ -78,7 +87,13 @@ def get_dtsg_lsd(cookie, fallback_html=""):
         lsd  = extract_lsd(fallback_html)
         if dtsg: return dtsg, lsd
 
-    dh = {"User-Agent": DESKTOP_UA, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9", "Cookie": cookie, "Referer": "https://www.facebook.com/"}
+    dh = {
+        "User-Agent": DESKTOP_UA,
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cookie": cookie,
+        "Referer": "https://www.facebook.com/",
+    }
     for url in ["https://www.facebook.com/", "https://www.facebook.com/profile.php", "https://m.facebook.com/"]:
         try:
             r = session.get(url, headers=dh, timeout=15, allow_redirects=True)
@@ -92,7 +107,14 @@ def get_dtsg_lsd(cookie, fallback_html=""):
 
 def toggle_shield(cookie, uid, dtsg, lsd, enable):
     jazoest = "2" + str(sum(ord(c) for c in dtsg))
-    variables = {"input": {"is_shielded": enable, "session_id": str(uuid.uuid4()), "actor_id": uid, "client_mutation_id": str(uuid.uuid4())}}
+    variables = {
+        "input": {
+            "is_shielded": enable,
+            "session_id": str(uuid.uuid4()),
+            "actor_id": uid,
+            "client_mutation_id": str(uuid.uuid4()),
+        }
+    }
     payload = {
         "av": uid, "__user": uid, "__a": "1",
         "fb_dtsg": dtsg,
@@ -104,7 +126,15 @@ def toggle_shield(cookie, uid, dtsg, lsd, enable):
         "jazoest": jazoest,
     }
     if lsd: payload["lsd"] = lsd
-    headers = {**BASE, "Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded", "Host": "www.facebook.com", "Origin": "https://www.facebook.com", "Referer": "https://www.facebook.com/", "X-FB-Friendly-Name": "IsShieldedSetMutation"}
+    headers = {
+        **BASE,
+        "Cookie": cookie,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Host": "www.facebook.com",
+        "Origin": "https://www.facebook.com",
+        "Referer": "https://www.facebook.com/",
+        "X-FB-Friendly-Name": "IsShieldedSetMutation",
+    }
     r = session.post("https://www.facebook.com/api/graphql/", data=payload, headers=headers, timeout=20)
     if r.status_code == 429:
         raise ValueError("Rate limited. Wait a moment.")
@@ -133,8 +163,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/ping":
-            self._json({"status": "ok"})
+        if self.path in ("/", "/ping"):
+            self._json({"status": "ok", "service": "Avatar Guard API"})
         else:
             self._json({"error": "Not found"}, 404)
 
@@ -164,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
             if not dtsg:
                 self._json({"error": "Could not extract dtsg token. Cookie may be restricted."})
                 return
-            self._json({"ok": True, "name": name, "uid": uid, "picture": pic, "dtsg": dtsg, "lsd": lsd or "", "token": token})
+            self._json({"ok": True, "name": name, "uid": uid, "picture": pic, "dtsg": dtsg, "lsd": lsd or ""})
         except ValueError as e:
             self._json({"error": str(e)})
         except requests.exceptions.ConnectionError:
@@ -201,10 +231,22 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def _keep_alive(url):
+    _time.sleep(60)
+    while True:
+        try:
+            requests.get(f"{url}/ping", timeout=10)
+        except Exception:
+            pass
+        _time.sleep(600)
+
+
 if __name__ == "__main__":
-    PORT = 5000
+    PORT = int(os.environ.get("PORT", 5000))
+    PUBLIC_URL = os.environ.get("RAILWAY_STATIC_URL") or os.environ.get("RENDER_EXTERNAL_URL") or f"http://localhost:{PORT}"
     httpd = HTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"\n  Avatar Guard API  —  http://localhost:{PORT}\n")
+    print(f"\n  Avatar Guard API  —  {PUBLIC_URL}\n")
+    threading.Thread(target=_keep_alive, args=(PUBLIC_URL,), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
